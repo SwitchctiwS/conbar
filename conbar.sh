@@ -1,0 +1,194 @@
+#!/bin/bash
+
+##############################################
+# conbar: CONfig (file) BAckup (and) Restore #
+##############################################
+
+### Author: Jared Thibault
+### Date: 07 Jul 2018
+
+### Description:
+# This program automatically backs up or restores specified files
+
+# <TODO>
+#   add error checking
+#   Update dirs, not just files
+# </TODO>
+
+### Defines
+cb_config_dir="$HOME/.config/conbar"
+cb_config_file="conbar.list"
+
+#### Displays when user anything other than commands
+function help_text {
+    echo 'CONBAR: CONfig (File) Backup And Restore'
+    echo ''
+    echo 'Description:'
+    echo '    This program automatically backs up/restores the config files listed in "conbar.list".'
+    echo '    "conbar.list" is saved at "$HOME/.config/conbar/conbar.list".'
+    echo '    The backed up files are saved at "$HOME/.config/conbar/$USER/dir" where "dir" is specified in "conbar.list".'
+    echo ''
+    echo 'Usage:'
+    echo '    conbar <backup|restore>'
+    echo ''
+    echo '    backup:  backs up files listed in conbar.list and creates "file".old if there is already a backed up file, and the original file and the backed up file differ'
+    echo '    restore: restores files listed in conbar.list and creates "file".old if there is already an original file, and the backed up file and the original file differ'
+    echo ''
+    echo 'conbar.list:'
+    echo '    Add config files to conbar.list with the backup directory and original file name in the format dir:filename (delimited by a ":")'
+    echo ''
+    echo '    e.g.:'
+    echo '        original filename: /home/user/foo/bar'
+    echo '        backup directory:  dir'
+    echo '        in conbar.list:    dir:$HOME/foo/bar'
+    echo ''
+    echo '        "foo" will be saved as /home/user/.config/conbar/user/dir/bar'
+
+    exit 1
+}
+
+### Runs on a fresh install (ie no config dir) and sets up the system
+function new_install {
+    echo 'Creating config folder at '"${cb_config_dir}"
+    mkdir -p "${cb_config_dir}"
+    touch "${cb_config_dir}/$cb_config_file"
+    chmod 644 "${cb_config_dir}/$cb_config_file"
+    exit 0
+}
+
+### Iterates through given line and processes it
+function backup {
+    # Delimited by a ':'
+    while IFS=':' read -ra config; do
+        # Shorthand to make things easier 
+        # eval makes envars work
+        original_file="$(eval echo "${config[1]}")"
+        backup_file_dir="${cb_config_dir}/$USER/${config[0]}"
+        backup_file="${cb_config_dir}/$USER/${config[0]}/$(basename "${config[1]}")" 
+        
+        # Checks file to make sure it exists
+        if [ -f "${original_file}" ]; then
+
+            # Only copies the file if it is different than the original file 
+            # This ensures that the config and config.old files are always
+            # different
+            # If the backup file exists...
+            if [ -f "${backup_file}" ]; then
+                diff "${original_file}" "${backup_file}" >> /dev/null
+
+                # And it's different than original, copy file and make backup
+                if [ $? -ne 0 ]; then
+                    mv "${backup_file}" "${backup_file}.old"  
+                    echo 'Created '${backup_file}'.old'
+                    cp "${original_file}" "${backup_file}"
+                    echo -e '\E[32m'"\033[1mCopied\033[0m ${original_file}"
+
+                # Doesn't copy if no difference
+                else
+                    echo "Did not copy (already at newest change): ${original_file}"
+                fi
+
+            # Creates directory and copies if it doesn't exist
+            else
+                mkdir -p "${backup_file_dir}"
+                echo "Created ${backup_file_dir}"
+                cp "${original_file}" "${backup_file}"
+                echo -e '\E[32m'"\033[1mCopied\033[0m ${original_file}"
+            fi
+
+        # Throws error if the file doesn't exist
+        else
+            echo -e '\E[31m'"\033[1m!! Error !! \033[0m ${original_file} does not exist!"
+            return 1
+        fi
+    done <<< "$1"
+    return 0
+}
+
+### Iterates through given line and processes it
+function restore {
+    # Delimited by a ':'
+    while IFS=':' read -ra config; do
+        # Shorthand to make things easier 
+        # eval makes $HOME work
+        original_file_dir="$(dirname $(eval echo "${config[1]}"))"
+        original_file="$(eval echo "${config[1]}")"
+        backup_file_dir="${cb_config_dir}/$USER/${config[0]}"
+        backup_file="${cb_config_dir}/$USER/${config[0]}/$(basename "${config[1]}")" 
+
+        # Checks restore file to make sure it exists
+        if [ -f "${backup_file}" ]; then
+
+            # If the original file exists and is different
+            if [ -f "${original_file}" ]; then
+                diff "${backup_file}" "${original_file}" >> /dev/null
+
+                # Then make a backup of the original file
+                if [ $? -ne 0 ]; then
+                    mv "${original_file}" "${original_file}.old"
+                    echo "Created ${original_file}.old"
+                    cp "${backup_file}" "${original_file}"
+                    echo -e '\E[32m'"\033[1mCopied\033[0m ${original_file}"
+                # If it's the same then do not copy
+                else
+                    echo "Did not copy (already at newest change): ${original_file}"
+                fi
+
+            # If it doesn't exist, then create directory and paste in file
+            else 
+                mkdir -p "${original_dir}"
+                echo "Created ${original_dir}"
+                cp "${backup_file}" "${original_file}"
+                echo -e '\E[32m'"\033[1mCopied\033[0m ${original_file}"
+            fi
+
+        # Throws error if the file doesn't exist
+        else
+            echo -e '\E[31m'"\033[1m!! Error !! \033[0m ${backup_file} does not exist!"
+            return 1
+        fi
+    done <<< $1
+    return 0
+}
+
+### Main
+# Checks if the config file exists. If not, it creates it then exits
+if ! [ -e "${cb_config_dir}/$cb_config_file" ]; then
+    new_install 
+fi
+
+# Error If there are too many commands
+if ! [ $# -eq 1 ]; then
+    help_text
+fi
+
+# Goes to backup
+let errors=0
+if [ $1 == "backup" ]; then
+    while IFS=$'\n' read -r line; do
+        backup $line
+        if [ $? -ne 0 ]; then
+            ((errors++))
+        fi
+        echo ''
+    done < "${cb_config_dir}/${cb_config_file}"
+    
+# Goes to restore 
+elif [ $1 == "restore" ]; then
+    while IFS=$'\n' read -r line; do
+        restore $line
+        if [ $? -ne 0 ]; then
+            ((errors++))
+        fi
+        echo ''
+    done < "${cb_config_dir}/${cb_config_file}"
+
+# If there is an incorrect command
+else
+    help_text
+fi
+
+# Read config file line by line
+echo 'Finished running with '$errors' errors'
+
+exit 0
